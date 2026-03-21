@@ -50,7 +50,7 @@ async fn main() {
                 }
             })
         })
-        .buffer_unordered(10000)
+        .buffer_unordered(500)
         .filter_map(|res| async { res.unwrap_or(None) })
         .collect()
         .await;
