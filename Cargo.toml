@@ -1,17 +1,14 @@
-[build]
-rustflags = ["-C", "target-cpu=native"]
+[package]
+name = "proxy-checker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.36", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-
-[package]
-name = "proxy_checker"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["socks"] }
-futures = "0.3"
+panic = "abort"
+strip = true
