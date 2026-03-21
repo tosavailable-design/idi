@@ -1,0 +1,8 @@
+name: Rust check proxy
+on: workflow_dispatch
+jobs:
+  check-proxy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: cargo run --release
