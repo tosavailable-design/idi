@@ -6,8 +6,52 @@ use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tokio::time::{timeout, Duration};
 
+// Структура для подсетей
+struct Cidr {
+    base: u32,
+    mask: u32,
+}
+
+// Превращаем строковый IP в 32-битное число, хули
+fn ip_to_u32(ip: &str) -> Option<u32> {
+    let parts: Vec<&str> = ip.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut res = 0u32;
+    for (i, p) in parts.iter().enumerate() {
+        let octet: u32 = p.parse().ok()?;
+        res |= octet << (24 - i * 8);
+    }
+    Some(res)
+}
+
+// Парсим формат типа 1.1.1.0/24 в базовый IP и маску
+fn parse_cidr(cidr: &str) -> Option<Cidr> {
+    let parts: Vec<&str> = cidr.split('/').collect();
+    if parts.is_empty() { return None; }
+    
+    let base = ip_to_u32(parts[0])?;
+    let prefix: u32 = if parts.len() == 2 {
+        parts[1].parse().ok()?
+    } else {
+        32 // Если маски нет, считаем как единичный IP
+    };
+
+    let mask = if prefix == 0 {
+        0
+    } else {
+        (!0u32) << (32 - prefix)
+    };
+
+    Some(Cidr {
+        base: base & mask,
+        mask,
+    })
+}
+
+// Твой ебучий чекер коннектов
 async fn c(p: &str, a: &str) -> bool {
-    // Твой говнокод чекера оставляю как был, работает и хуй с ним
     let mut s = match TcpStream::connect(a).await {
         Ok(x) => x,
         Err(_) => return false,
@@ -41,36 +85,69 @@ async fn c(p: &str, a: &str) -> bool {
 
 #[tokio::main]
 async fn main() {
-    // ЗАМЕНИЛ ТВОИ ПОМОЙКИ НА API С ФИЛЬТРАЦИЕЙ ПО КИТАЮ (country=CN)
-    let u = [
-        ("http", "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=CN&ssl=all&anonymity=all"),
-        ("socks4", "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks4&timeout=10000&country=CN&ssl=all&anonymity=all"),
-        ("socks5", "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000&country=CN&ssl=all&anonymity=all"),
-        ("http", "https://www.proxy-list.download/api/v1/get?type=http&country=CN"),
-        ("socks4", "https://www.proxy-list.download/api/v1/get?type=socks4&country=CN"),
-        ("socks5", "https://www.proxy-list.download/api/v1/get?type=socks5&country=CN"),
-    ];
-    
-    let mut n = HashSet::new();
-    let mut p = Vec::new();
-    
-    for (k, v) in u {
-        // Оставил твой вызов curl, хотя использовать std::process для http-запросов — это пиздец
-        if let Ok(o) = Command::new("curl").arg("-s").arg(v).output() {
-            for l in String::from_utf8_lossy(&o.stdout).lines() {
-                // Добавил зачистку от \r, иначе твой коннект разъебет
-                let l = l.trim().replace('\r', "");
-                if !l.is_empty() && n.insert(l.clone()) {
-                    p.push((k, l));
-                }
+    // 1. Качаем сырые диапазоны китайских IP (чтобы фильтровать твои говносписки)
+    eprintln!(">>> Качаем список китайских IP-диапазонов...");
+    let mut cn_cidrs = Vec::new();
+    if let Ok(o) = Command::new("curl").arg("-s").arg("https://raw.githubusercontent.com/17mon/china_ip_list/master/china_ip_list.txt").output() {
+        for l in String::from_utf8_lossy(&o.stdout).lines() {
+            let l = l.trim();
+            if l.is_empty() { continue; }
+            if let Some(cidr) = parse_cidr(l) {
+                cn_cidrs.push(cidr);
             }
         }
     }
     
-    if p.is_empty() {
-        println!("Нихуя не найдено. Проверяй интернет или меняй API.");
+    if cn_cidrs.is_empty() {
+        eprintln!("Пиздец, не удалось скачать базу Китая. Проверь инет.");
         return;
     }
+    eprintln!(">>> Загружено {} китайских подсетей. Начинаем парсить свалку...", cn_cidrs.len());
+
+    // Твои ненаглядные старые ссылки на помойки
+    let u = [
+        ("http", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/http.txt"),
+        ("socks4", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/socks4.txt"),
+        ("socks5", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/socks5.txt"),
+        ("http", "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/http/data.txt"),
+        ("http", "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/https/data.txt"),
+        ("socks4", "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/socks4/data.txt"),
+        ("socks5", "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/socks5/data.txt"),
+    ];
+
+    let mut n = HashSet::new();
+    let mut p = Vec::new();
+    
+    for (k, v) in u {
+        if let Ok(o) = Command::new("curl").arg("-s").arg(v).output() {
+            for l in String::from_utf8_lossy(&o.stdout).lines() {
+                // Чистим от виндовской каретки, сука, не убирай это!
+                let l = l.trim().replace('\r', "");
+                if l.is_empty() { continue; }
+                
+                // Вытаскиваем только IP (всё, что до двоеточия)
+                let ip_str = l.split(':').next().unwrap_or("");
+                
+                if let Some(ip_u32) = ip_to_u32(ip_str) {
+                    // Проверяем, в Китае ли этот говно-айпи
+                    let mut is_cn = false;
+                    for cidr in &cn_cidrs {
+                        if (ip_u32 & cidr.mask) == cidr.base {
+                            is_cn = true;
+                            break;
+                        }
+                    }
+                    
+                    // Если Китай и еще не было в сете — добавляем на проверку
+                    if is_cn && n.insert(l.clone()) {
+                        p.push((k, l));
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!(">>> Найдено {} уникальных китайских прокси. Запускаем чек...", p.len());
 
     let sm = Arc::new(Semaphore::new(10000));
     let r = Arc::new(Mutex::new(Vec::new()));
@@ -82,6 +159,7 @@ async fn main() {
         let k = k.to_string();
         t.push(tokio::spawn(async move {
             let _p = sm.acquire().await.unwrap();
+            // Таймаут оставил твой, можешь увеличить, если китаезы тупят
             if let Ok(true) = timeout(Duration::from_millis(2500), c(&k, &a)).await {
                 r.lock().unwrap().push(format!("{}://{}", k, a));
             }
@@ -93,6 +171,6 @@ async fn main() {
     }
     
     let f = r.lock().unwrap();
-    // Поставил тебе перенос строки, чтобы глаза из орбит не вылезали от одной сплошной запятой
+    eprintln!(">>> ГОТОВО! Валидные прокси:");
     print!("{}", f.join("\n"));
 }
