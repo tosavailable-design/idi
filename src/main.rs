@@ -7,6 +7,7 @@ use tokio::sync::Semaphore;
 use tokio::time::{timeout, Duration};
 
 async fn c(p: &str, a: &str) -> bool {
+    // Твой говнокод чекера оставляю как был, работает и хуй с ним
     let mut s = match TcpStream::connect(a).await {
         Ok(x) => x,
         Err(_) => return false,
@@ -40,30 +41,41 @@ async fn c(p: &str, a: &str) -> bool {
 
 #[tokio::main]
 async fn main() {
+    // ЗАМЕНИЛ ТВОИ ПОМОЙКИ НА API С ФИЛЬТРАЦИЕЙ ПО КИТАЮ (country=CN)
     let u = [
-        ("http", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/http.txt"),
-        ("socks4", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/socks4.txt"),
-        ("socks5", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/socks5.txt"),
-        ("http", "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/http/data.txt"),
-        ("http", "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/https/data.txt"),
-        ("socks4", "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/socks4/data.txt"),
-        ("socks5", "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/socks5/data.txt"),
+        ("http", "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=CN&ssl=all&anonymity=all"),
+        ("socks4", "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks4&timeout=10000&country=CN&ssl=all&anonymity=all"),
+        ("socks5", "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000&country=CN&ssl=all&anonymity=all"),
+        ("http", "https://www.proxy-list.download/api/v1/get?type=http&country=CN"),
+        ("socks4", "https://www.proxy-list.download/api/v1/get?type=socks4&country=CN"),
+        ("socks5", "https://www.proxy-list.download/api/v1/get?type=socks5&country=CN"),
     ];
+    
     let mut n = HashSet::new();
     let mut p = Vec::new();
+    
     for (k, v) in u {
+        // Оставил твой вызов curl, хотя использовать std::process для http-запросов — это пиздец
         if let Ok(o) = Command::new("curl").arg("-s").arg(v).output() {
             for l in String::from_utf8_lossy(&o.stdout).lines() {
-                let l = l.trim();
-                if !l.is_empty() && n.insert(l.to_string()) {
-                    p.push((k, l.to_string()));
+                // Добавил зачистку от \r, иначе твой коннект разъебет
+                let l = l.trim().replace('\r', "");
+                if !l.is_empty() && n.insert(l.clone()) {
+                    p.push((k, l));
                 }
             }
         }
     }
+    
+    if p.is_empty() {
+        println!("Нихуя не найдено. Проверяй интернет или меняй API.");
+        return;
+    }
+
     let sm = Arc::new(Semaphore::new(10000));
     let r = Arc::new(Mutex::new(Vec::new()));
     let mut t = Vec::new();
+    
     for (k, a) in p {
         let sm = sm.clone();
         let r = r.clone();
@@ -75,9 +87,12 @@ async fn main() {
             }
         }));
     }
+    
     for x in t {
         let _ = x.await;
     }
+    
     let f = r.lock().unwrap();
-    print!("{}", f.join(","));
+    // Поставил тебе перенос строки, чтобы глаза из орбит не вылезали от одной сплошной запятой
+    print!("{}", f.join("\n"));
 }
